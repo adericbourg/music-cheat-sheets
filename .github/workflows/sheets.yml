@@ -1,0 +1,100 @@
+name: Sheets
+
+# - Pull request: build the changed sheets and attach the PDFs to the run
+#   (action "Summary" tab) for review.
+# - Push to main: build the changed sheets and replace their PDF in the
+#   "latest" release.
+# - Manual run: rebuild every sheet and update the release.
+#
+# A sheet is a top-level directory containing <dir>/<dir>.tex.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: latest
+  RELEASE_TITLE: Latest versions
+
+jobs:
+  sheets:
+    # 1 vCPU runner, cheaper. Jobs are capped at 15 minutes, which is plenty here.
+    runs-on: ubuntu-slim
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: List sheets to build
+        id: sheets
+        env:
+          EVENT: ${{ github.event_name }}
+          PR_BASE: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE: ${{ github.event.before }}
+        run: |
+          all=$(for d in */; do d=${d%/}; [ -f "$d/$d.tex" ] && echo "$d"; done)
+
+          case "$EVENT" in
+            pull_request) base="$PR_BASE" ;;
+            push)         base="$PUSH_BEFORE" ;;
+            *)            base="" ;;
+          esac
+
+          if [ -z "$base" ] || ! git cat-file -e "$base^{commit}" 2>/dev/null; then
+            # Manual run, first push or rewritten history: rebuild everything.
+            selected="$all"
+          else
+            changed=$(git diff --name-only "$base" HEAD | cut -d/ -f1 | sort -u)
+            selected=$(comm -12 <(echo "$all" | sort) <(echo "$changed" | sort))
+          fi
+
+          echo "Selected sheets: ${selected:-none}"
+          echo "list=$(echo $selected)" >> "$GITHUB_OUTPUT"
+
+      - name: Install LuaLaTeX and the Inter font
+        if: steps.sheets.outputs.list != ''
+        run: |
+          # The slim image is minimal: sudo and gh are not guaranteed.
+          SUDO=$(command -v sudo || true)
+          packages="texlive-luatex texlive-latex-extra texlive-lang-french texlive-pictures lmodern fonts-inter"
+          if [ "${{ github.event_name }}" != "pull_request" ] && ! command -v gh > /dev/null; then
+            packages="$packages gh"
+          fi
+          $SUDO apt-get update
+          $SUDO env DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends $packages
+
+      - name: Build
+        if: steps.sheets.outputs.list != ''
+        run: |
+          mkdir -p output
+          for s in ${{ steps.sheets.outputs.list }}; do
+            echo "::group::$s"
+            (cd "$s" && lualatex -interaction=nonstopmode -halt-on-error "$s.tex")
+            cp "$s/$s.pdf" output/
+            echo "::endgroup::"
+          done
+
+      - name: Attach PDFs to the run (pull request)
+        if: github.event_name == 'pull_request' && steps.sheets.outputs.list != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: sheets-pdf
+          path: output/*.pdf
+
+      - name: Update the "latest" release
+        if: github.event_name != 'pull_request' && steps.sheets.outputs.list != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh release view "$RELEASE_TAG" > /dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" \
+              --title "$RELEASE_TITLE" \
+              --notes "Dernière version compilée de chaque fiche. Un PDF n'est remplacé que lorsque sa fiche change."
+          fi
+          gh release upload "$RELEASE_TAG" output/*.pdf --clobber

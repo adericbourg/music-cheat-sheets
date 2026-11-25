@@ -1,0 +1,10 @@
+# Build outputs: PDFs are published as release assets
+*.pdf
+*.aux
+*.log
+*.out
+*.toc
+*.synctex.gz
+*.fdb_latexmk
+*.fls
+output/
