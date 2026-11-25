@@ -23,4 +23,4 @@ Les PDF ne sont pas versionnés : ils sont compilés par GitHub Actions et publi
 2. Ajouter une ligne au tableau ci-dessus, avec le lien `https://github.com/adericbourg/music-cheat-sheets/releases/download/latest/ma-fiche.pdf`.
 3. Ouvrir une pull request.
 
-Les fiches se compilent avec LuaLaTeX et utilisent la police [Inter](https://rsms.me/inter/). En local : `cd ma-fiche && lualatex ma-fiche.tex`.
+Les fiches se compilent avec LuaLaTeX et utilisent la police [Inter](https://rsms.me/inter/). En local : `./build.sh` vérifie les prérequis et compile toutes les fiches (ou `./build.sh ma-fiche` pour une seule) ; les PDF sont écrits dans `output/`.
