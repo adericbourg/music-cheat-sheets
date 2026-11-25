@@ -82,7 +82,7 @@ jobs:
 
       - name: Attach PDFs to the run (pull request)
         if: github.event_name == 'pull_request' && steps.sheets.outputs.list != ''
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sheets-pdf
           path: output/*.pdf
