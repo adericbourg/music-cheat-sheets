@@ -9,6 +9,7 @@ Les PDF ne sont pas versionnés : ils sont compilés par GitHub Actions et publi
 | Fiche | Contenu | PDF | Source |
 |---|---|---|---|
 | Réglages de départ pour les balances | Réglages d'égalisation, de compression et de reverb par source sur une Zoom LiveTrak L-20, conseils de balance, aide-mémoire des registres | [balances.pdf](https://github.com/adericbourg/music-cheat-sheets/releases/download/latest/balances.pdf) | [`balances/`](balances/) |
+| Place des instruments dans le spectre | Plage totale, zone utile, zone à couper et zones à surveiller de chaque instrument du groupe, sur l'axe des registres | [spectre.pdf](https://github.com/adericbourg/music-cheat-sheets/releases/download/latest/spectre.pdf) | [`spectre/`](spectre/) |
 
 ## Fonctionnement
 

@@ -1,0 +1,184 @@
+% Place des instruments dans le spectre — complément de la fiche balances
+% Compiler avec LuaLaTeX : lualatex spectre.tex
+%
+% Les données sont dans la table « instr » de fiche.carte (section « calculs ») :
+%   nom, précision, plage totale {bas, haut}, zones utiles {{bas, haut[, étiquette]}},
+%   fréquence de coupe (reprendre le low cut de la fiche balances),
+%   zones à surveiller {{bas, haut, étiquette}}. Fréquences en Hz.
+
+\documentclass[9pt]{extarticle}
+\usepackage[a4paper,landscape,margin=9mm,top=8mm,bottom=8mm]{geometry}
+\usepackage{fontspec}
+\usepackage[french]{babel}
+\usepackage{tikz}
+\usetikzlibrary{patterns.meta}
+\usepackage{xcolor}
+\usepackage{enumitem}
+\usepackage{multicol}
+\usepackage{luacode}
+
+\setmainfont{Inter}[
+  UprightFont = *-Regular, BoldFont = *-SemiBold,
+  ItalicFont = *-Italic, BoldItalicFont = *-SemiBoldItalic,
+  Extension = .otf]
+\newfontfamily\displayfont{InterDisplay-Bold.otf}
+
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+
+% ---------------------------------------------------------------- couleurs
+% mêmes couleurs que la fiche balances
+\definecolor{encre}{HTML}{1F2430}
+\definecolor{doux}{HTML}{6B7280}
+\definecolor{piste}{HTML}{D9DCE3}
+\definecolor{coupe}{HTML}{2F6FB3}   % atténuation
+\definecolor{boost}{HTML}{D9692B}   % accentuation
+\definecolor{reglage}{HTML}{3E8E6E} % filtres, comp, réverb
+\definecolor{fond}{HTML}{F4F5F8}
+\color{encre}
+
+% ---------------------------------------------------------------- calculs (Lua)
+\begin{luacode*}
+  fiche = {}
+
+  -- carte des fréquences : bandeau de registres + une ligne par instrument
+  -- largeur totale en cm ; L = colonne des noms
+  function fiche.carte(w)
+    local L = 3.7
+    local W = w - L
+    local function x(f) return L + (math.log(f,10) - math.log(20,10)) / 3 * W end
+    local function hz(f)
+      if f >= 1000 then return (string.format("%g", f/1000):gsub("%.", ",")) .. "\\,k" end
+      return tostring(f)
+    end
+    local bandes = {
+      {20, 60, "Sub-grave", "ressenti, grondement", "Excès : boue sourde", "piste", "low cut, low"},
+      {60, 250, "Grave", "assise, chaleur", "Excès : « boum »", "coupe!25", "low (sous 100\\,Hz), mid (au-dessus)"},
+      {250, 500, "Bas-médium", "corps, épaisseur", "Excès : carton, boue", "coupe!15", "mid, low cut"},
+      {500, 2000, "Médium", "présence, caractère", "Excès : nasal, téléphone", "reglage!15", "mid"},
+      {2000, 5000, "Haut-médium", "attaque, intelligibilité", "Excès : dureté, fatigue", "boost!15", "mid"},
+      {5000, 10000, "Aigu", "brillance, définition", "Excès : sifflantes", "boost!25", "mid (jusqu'à 8\\,kHz)"},
+      {10000, 20000, "Extrême aigu", "air", "Excès : souffle", "piste", "high"},
+    }
+    -- nom, précision, plage totale {bas, haut}, zones utiles, coupe sous (Hz), zones à surveiller
+    local instr = {
+      {"Voix graves", "fond. 80–350\\,Hz", {80, 12000}, {{120, 6000}}, 80,
+        {{200, 300, "proximité"}, {6000, 8000, "sifflantes"}}},
+      {"Voix aiguës", "fond. 130\\,Hz–1\\,kHz", {130, 14000}, {{200, 8000}}, 120,
+        {{300, 400, "proximité"}, {2500, 3500, "dureté"}, {6000, 8000, "sifflantes"}}},
+      {"Guitare acoustique", "fond. 80\\,Hz–1\\,kHz", {80, 12000}, {{120, 8000}}, 90,
+        {{220, 300, "résonance, larsen"}, {2000, 3000, "piézo nasal"}}},
+      {"Guitare électrique", "fond. 80\\,Hz–1\\,kHz", {80, 6000}, {{150, 4000}}, 90,
+        {{250, 350, "boue"}}},
+      {"Harmonica", "fond. 260\\,Hz–2\\,kHz", {200, 8000}, {{300, 5000}}, 150,
+        {{2000, 3000, "perçant"}}},
+      {"Violon, alto", "fond. 130\\,Hz (alto) – 3\\,kHz", {130, 12000}, {{250, 8000}}, 150,
+        {{2500, 3500, "piézo agressif"}}},
+      {"Piano électrique", "fond. 40\\,Hz–2,5\\,kHz", {40, 8000}, {{80, 5000}}, 80,
+        {{300, 450, "boue"}}},
+      {"Basse", "fond. 40–400\\,Hz", {40, 5000}, {{50, 1500}}, 40,
+        {{200, 300, "bave"}}},
+      {"Grosse caisse", "fond. 50–100\\,Hz", {40, 10000}, {{50, 120, "rondeur"}, {2500, 5000, "attaque"}}, 40,
+        {{300, 450, "carton"}}},
+      {"Batterie, overheads", "cymbales jusqu'à 16\\,kHz", {50, 16000}, {{300, 14000}}, 200,
+        {{350, 500, "carton"}}},
+    }
+    local hb = 0.75     -- hauteur du bandeau
+    local ytxt = 1.0    -- place du texte sous le bandeau
+    local h = 1.05     -- hauteur d'une ligne d'instrument
+    local y0 = -hb - ytxt - 0.15
+    local ybas = y0 - #instr * h
+    local t = {string.format("\\begin{tikzpicture}[x=1cm,y=1cm,trim left=0cm,trim right=%.3fcm]", w)}
+    -- fond alterné des lignes
+    for i = 1, #instr do
+      if i % 2 == 1 then
+        local top = y0 - (i-1)*h
+        t[#t+1] = string.format("\\fill[fond] (0,%.3f) rectangle (%.3f,%.3f);", top, w, top - h)
+      end
+    end
+    -- graduations et grille verticale
+    for _, f in ipairs({20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000}) do
+      local lab = f >= 1000 and (string.format("%g", f/1000) .. "\\,k") or tostring(f)
+      t[#t+1] = string.format("\\draw[piste, line width=0.3pt] (%.3f,%.3f) -- (%.3f,%.3f);", x(f), y0, x(f), ybas)
+      t[#t+1] = string.format("\\draw[doux, line width=0.3pt] (%.3f,0) -- (%.3f,0.08);", x(f), x(f))
+      t[#t+1] = string.format("\\node[font=\\tiny, text=doux, anchor=south, inner sep=1pt] at (%.3f,0.04) {%s};", x(f), lab)
+    end
+    -- bandeau des registres
+    t[#t+1] = string.format("\\node[font=\\scriptsize\\bfseries, text=encre!80, anchor=west] at (0,%.3f) {Registres};", -hb/2)
+    for _, b in ipairs(bandes) do
+      local a, z = x(b[1]), x(b[2])
+      t[#t+1] = string.format("\\fill[%s] (%.3f,%.3f) rectangle (%.3f,0);", b[6], a, -hb, z)
+      t[#t+1] = string.format("\\node[font=\\scriptsize\\bfseries, text=encre] at (%.3f,%.3f) {%s};", (a+z)/2, -hb/2, b[3])
+      t[#t+1] = string.format("\\node[font=\\tiny, text=encre!85, align=center, anchor=north, inner sep=1pt] at (%.3f,%.3f) {%s\\\\[-1pt]\\color{doux}%s\\\\[-1pt]\\color{reglage!80!black}Réglage : %s};", (a+z)/2, -hb-0.05, b[4], b[5], b[7])
+      t[#t+1] = string.format("\\draw[white, line width=0.8pt] (%.3f,%.3f) -- (%.3f,0);", a, -hb, a)
+    end
+    for _, m in ipairs({{100, "low"}, {10000, "high"}}) do
+      t[#t+1] = string.format("\\draw[reglage!80!black, line width=0.7pt, dash pattern=on 1.5pt off 1.2pt] (%.3f,%.3f) -- (%.3f,0.1);", x(m[1]), -hb-0.07, x(m[1]))
+      local txt = m[2] == "low" and ("←\\," .. m[2]) or (m[2] .. "\\,→")
+      t[#t+1] = string.format("\\node[font=\\tiny\\bfseries, text=reglage!80!black, anchor=east, inner sep=0pt] at (%.3f,-0.09) {%s};", x(m[1]) - 0.12, txt)
+    end
+    -- lignes d'instruments
+    for i, it in ipairs(instr) do
+      local top = y0 - (i-1)*h
+      local yb = top - h*0.64      -- axe des barres
+      local yl = top - h*0.25      -- étiquettes
+      t[#t+1] = string.format("\\node[font=\\footnotesize\\bfseries, text=encre, anchor=west, inner sep=0pt] at (0.1,%.3f) {%s};", top - h*0.36, it[1])
+      t[#t+1] = string.format("\\node[font=\\tiny, text=doux, anchor=west, inner sep=0pt] at (0.1,%.3f) {%s};", top - h*0.7, it[2])
+      -- à couper
+      local c = it[5]
+      t[#t+1] = string.format("\\fill[pattern={Lines[angle=45, distance=2.2pt, line width=0.5pt]}, pattern color=coupe!70] (%.3f,%.3f) rectangle (%.3f,%.3f);", x(20), yb-0.13, x(c), yb+0.13)
+      t[#t+1] = string.format("\\draw[coupe, line width=0.7pt] (%.3f,%.3f) -- (%.3f,%.3f);", x(c), yb-0.13, x(c), yb+0.13)
+      t[#t+1] = string.format("\\node[font=\\tiny\\bfseries, text=coupe!85!black, anchor=east, inner sep=1pt] at (%.3f,%.3f) {< %s};", x(c), yl, hz(c))
+      -- plage totale
+      t[#t+1] = string.format("\\draw[encre!45, line width=0.9pt] (%.3f,%.3f) -- (%.3f,%.3f);", x(it[3][1]), yb, x(it[3][2]), yb)
+      t[#t+1] = string.format("\\draw[encre!45, line width=0.6pt] (%.3f,%.3f) -- (%.3f,%.3f) (%.3f,%.3f) -- (%.3f,%.3f);", x(it[3][1]), yb-0.06, x(it[3][1]), yb+0.06, x(it[3][2]), yb-0.06, x(it[3][2]), yb+0.06)
+      -- zones utiles
+      for _, u in ipairs(it[4]) do
+        t[#t+1] = string.format("\\fill[reglage] (%.3f,%.3f) rectangle (%.3f,%.3f);", x(u[1]), yb-0.075, x(u[2]), yb+0.075)
+        if u[3] then
+          t[#t+1] = string.format("\\node[font=\\tiny, text=reglage!80!black, anchor=north, inner sep=1pt] at (%.3f,%.3f) {%s};", (x(u[1])+x(u[2]))/2, yb-0.08, u[3])
+        end
+      end
+      -- zones à surveiller
+      for _, s in ipairs(it[6]) do
+        t[#t+1] = string.format("\\filldraw[fill=boost!35, draw=boost!90!black, line width=0.5pt] (%.3f,%.3f) rectangle (%.3f,%.3f);", x(s[1]), yb-0.11, x(s[2]), yb+0.11)
+        t[#t+1] = string.format("\\node[font=\\tiny, text=boost!75!black, anchor=south, inner sep=0.5pt] at (%.3f,%.3f) {%s};", (x(s[1])+x(s[2]))/2, yb+0.11, s[3])
+      end
+    end
+    t[#t+1] = string.format("\\draw[encre!40, line width=0.4pt] (0,%.3f) -- (%.3f,%.3f);", ybas, w, ybas)
+    t[#t+1] = "\\end{tikzpicture}"
+    tex.sprint(table.concat(t, " "))
+  end
+\end{luacode*}
+
+\begin{document}
+{\displayfont\fontsize{17}{19}\selectfont Place des instruments dans le spectre}\hfill
+{\small\color{doux}Le mid de la table balaye de 100\,Hz à 8\,kHz ; le low agit sous 100\,Hz et le high au-dessus de 10\,kHz (pointillés)}
+
+\vspace{1.2mm}
+{\scriptsize\color{doux}
+\tikz[baseline=-0.6ex]{\draw[encre!45, line width=0.9pt] (0,0) -- (0.5,0); \draw[encre!45, line width=0.6pt] (0,-0.06) -- (0,0.06) (0.5,-0.06) -- (0.5,0);}~plage totale de l'instrument \quad
+\tikz[baseline=-0.6ex]{\fill[reglage] (0,-0.075) rectangle (0.5,0.075);}~zone utile, à garder \quad
+\tikz[baseline=-0.6ex]{\fill[pattern={Lines[angle=45, distance=2.2pt, line width=0.5pt]}, pattern color=coupe!70] (0,-0.13) rectangle (0.5,0.13); \draw[coupe, line width=0.7pt] (0.5,-0.13) -- (0.5,0.13);}~à couper (low cut de la fiche balances) \quad
+\tikz[baseline=-0.6ex]{\filldraw[fill=boost!35, draw=boost!90!black, line width=0.5pt] (0,-0.11) rectangle (0.35,0.11);}~zone à surveiller : creuser seulement si le défaut s'entend}
+
+\vspace{4mm}
+\directlua{fiche.carte(tex.dimen.linewidth/65536/28.45274)}
+
+\vspace{4mm}
+\setlength{\columnsep}{9mm}
+\begin{multicols}{2}
+\fontsize{9}{11.5}\selectfont
+\setlist[itemize]{leftmargin=4.5mm, itemsep=0.6mm, topsep=0mm, label={\color{doux}•}}
+\begin{itemize}
+  \item La plage totale déborde souvent de la zone utile : sous la zone utile, on n'entend que du grondement, des bruits de manipulation et le grave des sources voisines. Le low cut sert à libérer cette place.
+  \item Deux instruments dont les zones utiles se recouvrent se masquent. Plutôt que de booster celui qui disparaît, creuser légèrement sa zone chez le voisin.
+  \item Basse et grosse caisse se partagent le grave : la grosse caisse garde sa rondeur sous 100\,Hz et son attaque vers 2,5–5\,kHz, la basse prend la place entre les deux.
+  \item Voix, guitares acoustiques, violon et harmonica se disputent le médium : c'est là que les petits creux de la fiche balances (250–400\,Hz, 2,5\,kHz) laissent passer la voix.
+\end{itemize}
+\end{multicols}
+
+\vfill
+{\scriptsize\color{doux}« fond. » : plage des fondamentales, c'est-à-dire des notes jouées. Au-dessus, les harmoniques donnent le timbre de l'instrument. Les plages sont indicatives et dépendent du micro et du jeu.}
+
+\end{document}
