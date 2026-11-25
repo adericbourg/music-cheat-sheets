@@ -1,0 +1,317 @@
+% Fiche de balance — Zoom LiveTrak L-20
+% Compiler avec LuaLaTeX : lualatex fiche-balance.tex
+%
+% Pour modifier un réglage, il suffit d'éditer la ligne \source{...} concernée
+% dans le tableau (section « TABLEAU »). Ordre des arguments :
+%   1 nom, 2 précision, 3 low cut (Hz), 4 low (dB), 5 mid freq (Hz), 6 mid (dB),
+%   7 high (dB), 8 comp (position horaire), 9 réverb (position horaire), 10 notes
+% Positions horaires : 7 = minimum (off), 12 = milieu, 17 = maximum (5 h).
+% Mettre « - » en comp ou réverb pour « sans objet ».
+
+\documentclass[9pt]{extarticle}
+\usepackage[a4paper,landscape,margin=9mm,top=8mm,bottom=8mm]{geometry}
+\usepackage{fontspec}
+\usepackage[french]{babel}
+\usepackage{tikz}
+\usetikzlibrary{arrows.meta}
+\usepackage{xcolor}
+\usepackage{array,tabularx,colortbl}
+\usepackage{enumitem}
+\usepackage{multicol}
+\usepackage{luacode}
+
+\setmainfont{Inter}[
+  UprightFont = *-Regular, BoldFont = *-SemiBold,
+  ItalicFont = *-Italic, BoldItalicFont = *-SemiBoldItalic,
+  Extension = .otf]
+\newfontfamily\displayfont{InterDisplay-Bold.otf}
+
+\pagestyle{empty}
+\setlength{\parindent}{0pt}
+
+% ---------------------------------------------------------------- couleurs
+\definecolor{encre}{HTML}{1F2430}
+\definecolor{doux}{HTML}{6B7280}
+\definecolor{piste}{HTML}{D9DCE3}
+\definecolor{coupe}{HTML}{2F6FB3}   % atténuation
+\definecolor{boost}{HTML}{D9692B}   % accentuation
+\definecolor{reglage}{HTML}{3E8E6E} % filtres, comp, réverb
+\definecolor{fond}{HTML}{F4F5F8}
+\definecolor{groupe}{HTML}{E8EBF1}
+\color{encre}
+
+% ---------------------------------------------------------------- calculs (Lua)
+\begin{luacode*}
+  fiche = {}
+  local function num(x)
+    local s = string.format("%.1f", x):gsub("%.0$", ""):gsub("%.", ",")
+    return s
+  end
+  function fiche.hz(f)
+    if f >= 1000 then return num(f/1000) .. "\\,kHz" end
+    return num(f) .. "\\,Hz"
+  end
+  function fiche.db(d)
+    if d == 0 then return "0\\,dB" end
+    if d > 0 then return "+" .. num(d) .. "\\,dB" end
+    return "−" .. num(-d) .. "\\,dB"
+  end
+  function fiche.clock(h)
+    if h <= 7 then return "off" end
+    local hh = math.floor(h)
+    local mm = math.floor((h - hh) * 60 + 0.5)
+    local disp = hh > 12 and hh - 12 or hh
+    if mm == 0 then return disp .. "\\,h" end
+    return disp .. "\\,h\\," .. string.format("%02d", mm)
+  end
+  -- course de 270° : 7 h = 225°, 12 h = 90°, 5 h = -45°
+  local function from_frac(t) return 225 - 270 * t end
+  function fiche.a_gain(d) return from_frac((d + 15) / 30) end
+  function fiche.a_log(f, lo, hi) return from_frac(math.log(f/lo) / math.log(hi/lo)) end
+  function fiche.a_clock(h) return from_frac((h - 7) / 10) end
+
+  -- dessine un potar : angle de la valeur, angle de référence de l'arc, couleur
+  function fiche.knob(a, ref, col, label, center)
+    local t = {}
+    t[#t+1] = "\\begin{tikzpicture}[baseline=(b), scale=0.8]"
+    t[#t+1] = "\\coordinate (b) at (0,-0.62);"
+    t[#t+1] = "\\draw[piste, line width=1.3pt, line cap=round] (225:0.36) arc[start angle=225, end angle=-45, radius=0.36];"
+    if center then
+      t[#t+1] = "\\draw[doux, line width=0.5pt] (90:0.40) -- (90:0.46);"
+    end
+    if ref and math.abs(a - ref) > 0.5 then
+      t[#t+1] = string.format("\\draw[%s, line width=1.6pt, line cap=round] (%.2f:0.36) arc[start angle=%.2f, end angle=%.2f, radius=0.36];", col, ref, ref, a)
+    end
+    t[#t+1] = "\\fill[white] (0,0) circle (0.27); \\draw[encre!70, line width=0.5pt] (0,0) circle (0.27);"
+    t[#t+1] = string.format("\\draw[encre, line width=1.1pt, line cap=round] (0,0) -- (%.2f:0.25);", a)
+    t[#t+1] = string.format("\\node[font=\\scriptsize\\bfseries, text=encre, anchor=north, inner sep=0pt] at (0,-0.43) {%s};", label)
+    t[#t+1] = "\\end{tikzpicture}"
+    tex.sprint(table.concat(t, " "))
+  end
+
+  function fiche.gain(d)
+    local col = d < 0 and "coupe" or (d > 0 and "boost" or "doux")
+    fiche.knob(fiche.a_gain(d), 90, col, fiche.db(d), true)
+  end
+  function fiche.lowcut(f)
+    fiche.knob(fiche.a_log(f, 40, 600), 225, "reglage", fiche.hz(f), false)
+  end
+  function fiche.midfreq(f)
+    fiche.knob(fiche.a_log(f, 100, 8000), nil, "reglage", fiche.hz(f), false)
+  end
+  function fiche.pos(s)
+    if s == "-" then
+      tex.sprint("{\\color{doux}\\footnotesize —}")
+      return
+    end
+    local h = tonumber(s)
+    fiche.knob(fiche.a_clock(h), 225, "reglage", fiche.clock(h), false)
+  end
+
+  -- bande de registres : largeur en cm
+  function fiche.spectre(w)
+    local function x(f) return (math.log(f,10) - math.log(20,10)) / 3 * w end
+    local bandes = {
+      {20, 60, "Sub-grave", "ressenti, grondement", "Excès : boue sourde", "piste", "low cut, low"},
+      {60, 250, "Grave", "assise, chaleur", "Excès : « boum »", "coupe!25", "low (sous 100\\,Hz), mid (au-dessus)"},
+      {250, 500, "Bas-médium", "corps, épaisseur", "Excès : carton, boue", "coupe!15", "mid, low cut"},
+      {500, 2000, "Médium", "présence, caractère", "Excès : nasal, téléphone", "reglage!15", "mid"},
+      {2000, 5000, "Haut-médium", "attaque, intelligibilité", "Excès : dureté, fatigue", "boost!15", "mid"},
+      {5000, 10000, "Aigu", "brillance, définition", "Excès : sifflantes", "boost!25", "mid (jusqu'à 8\\,kHz)"},
+      {10000, 20000, "Extrême aigu", "air", "Excès : souffle", "piste", "high"},
+    }
+    local t = {string.format("\\begin{tikzpicture}[x=1cm,y=1cm,trim left=0cm,trim right=%.3fcm]", w)}
+    -- bandes
+    for _, b in ipairs(bandes) do
+      local a, z = x(b[1]), x(b[2])
+      t[#t+1] = string.format("\\fill[%s] (%.3f,-0.55) rectangle (%.3f,0);", b[6], a, z)
+      t[#t+1] = string.format("\\node[font=\\scriptsize\\bfseries, text=encre] at (%.3f,-0.275) {%s};", (a+z)/2, b[3])
+      t[#t+1] = string.format("\\node[font=\\tiny, text=encre!85, align=center, anchor=north, inner sep=1pt] at (%.3f,-0.6) {%s\\\\[-1pt]\\color{doux}%s\\\\[-1pt]\\color{reglage!80!black}Réglage : %s};", (a+z)/2, b[4], b[5], b[7])
+      t[#t+1] = string.format("\\draw[white, line width=0.8pt] (%.3f,-0.55) -- (%.3f,0);", a, a)
+    end
+    -- zones d'action du low et du high (shelves fixes)
+    for _, m in ipairs({{100, "low"}, {10000, "high"}}) do
+      t[#t+1] = string.format("\\draw[reglage!80!black, line width=0.7pt, dash pattern=on 1.5pt off 1.2pt] (%.3f,-0.62) -- (%.3f,0.1);", x(m[1]), x(m[1]))
+      local txt = m[2] == "low" and ("←\\," .. m[2]) or (m[2] .. "\\,→")
+      t[#t+1] = string.format("\\node[font=\\tiny\\bfseries, text=reglage!80!black, anchor=east, inner sep=0pt] at (%.3f,-0.09) {%s};", x(m[1]) - 0.12, txt)
+    end
+    -- graduations
+    for _, f in ipairs({20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000}) do
+      local lab = f >= 1000 and (string.format("%g", f/1000) .. "\\,k") or tostring(f)
+      t[#t+1] = string.format("\\draw[doux, line width=0.3pt] (%.3f,0) -- (%.3f,0.08);", x(f), x(f))
+      t[#t+1] = string.format("\\node[font=\\tiny, text=doux, anchor=south, inner sep=1pt] at (%.3f,0.04) {%s};", x(f), lab)
+    end
+    t[#t+1] = "\\end{tikzpicture}"
+    tex.sprint(table.concat(t, " "))
+  end
+\end{luacode*}
+
+\newcommand\Kgain[1]{\directlua{fiche.gain(#1)}}
+\newcommand\Klc[1]{\directlua{fiche.lowcut(#1)}}
+\newcommand\Kmf[1]{\directlua{fiche.midfreq(#1)}}
+\newcommand\Kpos[1]{\directlua{fiche.pos("\luaescapestring{#1}")}}
+
+% ---------------------------------------------------------------- tableau
+\renewcommand\tabularxcolumn[1]{m{#1}}
+\newcolumntype{C}[1]{>{\centering\arraybackslash}m{#1}}
+\newcolumntype{N}{>{\raggedright\arraybackslash\footnotesize\linespread{0.95}\selectfont\color{encre!85}}X}
+\setlength{\tabcolsep}{3pt}
+\renewcommand{\arraystretch}{1}
+
+% \source{nom}{précision}{lowcut}{low}{midfreq}{mid}{high}{comp}{réverb}{notes}
+\newcommand\source[9]{%
+  \rule[-4mm]{0pt}{9.4mm}\parbox[c]{44mm}{\raggedright\small\textbf{#1}\\[-1pt]{\scriptsize\color{doux}#2}} &
+  \Klc{#3} & \Kgain{#4} & \Kmf{#5} & \Kgain{#6} & \Kgain{#7} & \Kpos{#8} & \Kpos{#9} &
+  \parbox[c][8.6mm][t]{\linewidth}{\raggedright\vspace{0.4mm}\sourcenote}}
+\newcommand\entete[2]{\begin{tabular}{@{}c@{}}\small\bfseries #1\\[-1pt]\tiny\color{doux}#2\end{tabular}}
+\newcommand\enteteg[1]{\begin{tabular}{@{}l@{}}\small\bfseries #1\\[-1pt]\tiny\strut\end{tabular}}
+\newcommand\note[1]{\gdef\sourcenote{#1}}
+\newcommand\groupe[1]{%
+  \multicolumn{9}{>{\columncolor{groupe}}l}{\rule{0pt}{3.6mm}\scriptsize\bfseries\color{encre!80}\MakeUppercase{#1}}\\}
+
+\begin{document}
+
+% ================================================================ PAGE 1
+{\displayfont\fontsize{17}{19}\selectfont Réglages de départ pour les balances}\hfill
+{\small\color{doux}Matériel de référence : Zoom LiveTrak L-20}
+
+\vspace{1.2mm}
+{\scriptsize\color{doux}
+\textcolor{coupe}{\rule[0.3ex]{3mm}{1.4pt}}~atténuation \quad
+\textcolor{boost}{\rule[0.3ex]{3mm}{1.4pt}}~accentuation \quad
+\textcolor{reglage}{\rule[0.3ex]{3mm}{1.4pt}}~filtre, compression, envoi de reverb.}
+
+\vspace{1.5mm}
+\begin{tabularx}{\linewidth}{@{}m{44mm} C{14mm} C{14mm} C{14mm} C{14mm} C{14mm} C{14mm} C{14mm} N@{}}
+\arrayrulecolor{encre!40}
+\enteteg{Source} &
+\entete{Low cut}{40–600\,Hz} &
+\entete{Low}{100\,Hz} &
+\entete{Mid freq}{100\,Hz–8\,kHz} &
+\entete{Mid}{±15\,dB} &
+\entete{High}{10\,kHz} &
+\entete{Comp}{tranches mono} &
+\entete{Reverb}{envoi EFX} &
+\enteteg{Points d'attention} \\[1mm]
+\hline
+\groupe{Voix}
+\note{Le creux dans les bas-médiums compense l'effet de proximité des micros dynamiques. Si la voix devient dure, déplacer le mid vers 3\,kHz à −2\,dB.}
+\source{Voix graves}{basse, baryton}{80}{0}{250}{-3}{2}{10}{10} \\
+\note{Même logique avec un filtre plus haut. Pour une soprano qui perce trop, essayer mid 2,5\,kHz à −2\,dB.}
+\source{Voix médiums et aiguës}{ténor, alto, mezzo, soprano}{120}{0}{350}{-3}{2}{10}{10} \\
+\groupe{Guitares}
+\note{Le piézo de jumbo a tendance à « nasiller » vers 2–3\,kHz et à gronder dans le grave. Laisser l'EQ du préampli de la guitare à plat.}
+\source{Guitare acoustique Franck}{jumbo, piézo sous le sillet}{100}{-2}{2500}{-3}{0}{9.5}{9.5} \\
+\note{Les capteurs K\&K donnent un son boisé qui résonne vers 250\,Hz, là où naissent souvent les larsens. Garder l'EQ de l'Acoustasonic au neutre.}
+\source{Guitare acoustique Alban}{OM, K\&K Pure Mini, Acoustasonic}{80}{0}{250}{-3}{2}{9.5}{9.5} \\
+\note{Le modèle Princeton a déjà un spectre resserré : il vaut mieux corriger très peu. Deux tranches mono réglées pareil, panoramique 10\,h / 14\,h.}
+\source{Guitare électrique}{ES-330, Tone Master Pro, XLR stéréo}{90}{0}{300}{-2}{0}{7}{7} \\
+\groupe{Vents et cordes frottées}
+\note{L'harmonica sur porte-harmonica arrive à distance variable du micro : la compression lisse les écarts de volume. Il devient vite perçant dans l'aigu.}
+\source{Harmonica, micro chant}{porte-harmonica, micro sur pied}{150}{0}{2500}{-3}{-2}{10}{9.5} \\
+\note{Le bullet a un son médium et granuleux qui fait son caractère : corriger peu. Ne pas monter les aigus, qui apportent souffle et larsen.}
+\source{Harmonica, micro bullet}{micro tenu en main, direct table}{120}{0}{800}{-2}{0}{10}{9.5} \\
+\note{Pour l'alto, descendre le low cut vers 100\,Hz. Le piézo de chevalet est souvent agressif dans le haut-médium.}
+\source{Violon, alto — piézo}{capteur de chevalet}{150}{-3}{2500}{-3}{-2}{9.5}{10.5} \\
+\note{Pour l'alto, descendre le low cut vers 100\,Hz. Surveiller le larsen : couper la fréquence qui siffle avec le mid.}
+\source{Violon, alto — micro}{condensateur à pince}{150}{-2}{3000}{-2}{2}{9.5}{10.5} \\
+\groupe{Claviers et rythmique}
+\note{Deux tranches mono réglées pareil, panoramique 10\,h / 14\,h. Le grave cède un peu de place à la basse. Compression seulement si le jeu est très nuancé.}
+\source{Piano électrique}{DI stéréo}{80}{-2}{400}{-2}{0}{7}{8.5} \\
+\note{Le mid à 800\,Hz donne de la définition sur une petite façade. Si le son bave, passer plutôt à 250\,Hz à −3\,dB. Jamais de reverb.}
+\source{Basse}{Tone Master Pro, modèle Bassman}{40}{0}{800}{2}{-3}{9.5}{7} \\
+\note{Le creux à 350\,Hz enlève le son « carton ». La Beta\,52 apporte déjà grave et attaque. Jamais de reverb.}
+\source{Grosse caisse}{Beta 52}{40}{0}{350}{-4}{0}{8.5}{7} \\
+\note{Le filtre haut laisse le grave à la grosse caisse. Dans un petit bar, la batterie s'entend déjà seule : rester discret.}
+\source{Batterie, overheads}{2 × SM57}{200}{0}{400}{-3}{2}{7}{9} \\
+\hline
+\end{tabularx}
+
+\vfill
+{\scriptsize\color{doux}Toutes les valeurs sont des points de départ, établis pour des micros et des sources donnés. Un autre micro, une autre guitare ou une autre salle peuvent demander d'autres réglages : l'oreille a toujours le dernier mot.}
+
+
+% ================================================================ PAGE 2
+\newpage
+{\displayfont\fontsize{17}{19}\selectfont Pendant la balance}\hfill
+{\small\color{doux}Quelques repères}
+
+\vspace{2mm}
+\setlist[itemize]{leftmargin=4.5mm, itemsep=0.8mm, topsep=1mm, label={\color{doux}•}, after=\vspace{2mm}}
+\setlength{\columnsep}{9mm}
+\raggedcolumns
+\begin{multicols}{2}
+\fontsize{9.5}{12.3}\selectfont
+
+\textbf{Déroulé conseillé}
+\begin{itemize}
+  \item Hors installation, prévoir environ 5\,min par source, 10\,min pour les retours et 10 à 15\,min pour un morceau d'ensemble. Une source n'est pas une personne : voix, guitare et harmonica d'une même personne font trois sources, mais une paire stéréo n'en fait qu'une.
+  \item Régler d'abord le gain de chaque tranche, EQ à plat, au volume du concert : le vumètre doit monter franchement sans toucher le rouge.
+  \item Appliquer ensuite les valeurs de la fiche, puis écouter la tranche seule (bouton \textsc{solo}) avant de l'écouter dans le mix.
+  \item Ordre habituel : grosse caisse, overheads, basse, guitares, piano, violon, harmonica, voix, puis un morceau avec tout le groupe.
+  \item Régler les retours une fois la façade calée, en commençant par ce que chacun·e veut entendre de soi.
+\end{itemize}
+
+\textbf{Principes à garder en tête}
+\begin{itemize}
+  \item Il vaut mieux couper ce qui gêne que booster ce qui manque. Si un réglage dépasse ±6\,dB, le problème vient sans doute d'ailleurs : placement du micro, réglage de l'instrument ou de l'ampli.
+  \item Pour trouver une fréquence gênante, monter le mid de +6 à +9\,dB, balayer le mid freq jusqu'à entendre le défaut grossir, puis repasser en négatif.
+\end{itemize}
+
+\textbf{Panoramique}
+\begin{itemize}
+  \item Garder au centre la voix principale, la basse et la grosse caisse, qui portent le morceau.
+  \item Écarter légèrement les autres sources selon leur place sur scène, vue du public, sans dépasser 10\,h ou 14\,h : une bonne partie du public n'entend qu'une enceinte.
+  \item Régler les paires stéréo (guitare électrique, piano, overheads) de façon symétrique.
+\end{itemize}
+
+\textbf{Compression}
+\begin{itemize}
+  \item La L-20 propose un seul bouton de compression par tranche mono.
+  \item Sur une voix, viser une compression qui ne s'entend pas : si le son « pompe » ou s'écrase, redescendre.
+  \item Les sources déjà traitées (ex : Tone Master Pro) s'en passent généralement.
+\end{itemize}
+
+\columnbreak
+
+\textbf{Reverb}
+\begin{itemize}
+  \item Proposition de répartition : \textbf{EFX\,1 en Plate} (ou Vocal\,1) pour les voix, le violon et l'harmonica ; \textbf{EFX\,2 en Room\,2} pour les guitares acoustiques, le piano et les overheads.
+  \item Dans un bar à l'acoustique vive, la salle apporte déjà sa propre reverb : rester en dessous des valeurs de la fiche. En terrasse, il est possible de monter un peu.
+  \item Basse, grosse caisse et guitare électrique n'en reçoivent pas : elles brouilleraient le grave ou doubleraient les effets du Tone Master Pro.
+  \item Garder les retours sans reverb, ce qui limite le larsen et aide chacun·e à s'entendre juste.
+\end{itemize}
+
+\textbf{Larsen}
+\begin{itemize}
+  \item Un micro cardioïde (e835, e935, SM58) capte très peu ce qui arrive par l'arrière. Placer idéalement le retour dans l'axe arrière du micro, c'est-à-dire au sol, devant la personne qui chante.
+  \item Quand un retour est partagé et posé en travers, entre deux musicien·nes, orienter les micros pour qu'il arrive par leur côté ou leur arrière, jamais par l'avant. Dans ce retour commun, ne mettre que ce dont les deux ont vraiment besoin, et peu des micros voisins.
+  \item Si un sifflement apparaît, creuser sa fréquence plutôt que de baisser tout le volume. Sur la tranche fautive, souvent celle dont le micro vise un retour, mettre le mid à −6\,dB (jamais en positif) et tourner lentement le mid freq jusqu'à ce que le sifflement cesse, puis réduire le creux au minimum utile.
+\end{itemize}
+
+\textbf{Quand le son…}\par\vspace{1mm}
+{\fontsize{8.6}{10.6}\selectfont
+\renewcommand{\arraystretch}{1.12}\renewcommand\tabularxcolumn[1]{p{#1}}
+\begin{tabularx}{\linewidth}{@{\hspace{4.5mm}}>{\bfseries}l X@{}}
+paraît maigre, fin & baisser le low cut, puis monter le low de 2 à 3\,dB. \\
+est boueux, brouillon & creuser le mid vers 250–400\,Hz de 3\,dB, remonter le low cut. \\
+manque d'attaque & monter le mid vers 2–4\,kHz de 2\,dB, ou creuser vers 300\,Hz. \\
+sonne nasal, téléphone & creuser le mid vers 800\,Hz–1,2\,kHz de 3\,dB. \\
+est dur, agressif & creuser le mid vers 2,5–4\,kHz de 3\,dB. \\
+est terne, sourd & monter le high de 2 à 3\,dB, après avoir vérifié le micro. \\
+siffle sur les « s » & creuser le mid vers 6–8\,kHz, ou baisser le high de 2\,dB. \\
+fait « boum » & baisser le low de 3\,dB ou remonter le low cut ; éloigner un peu le micro. \\
+se perd dans le mix & vérifier d'abord le volume, puis creuser sa zone chez un voisin plutôt que de la booster. \\
+\end{tabularx}}
+
+
+\end{multicols}
+
+\vfill
+{\scriptsize\bfseries\color{encre!80}\MakeUppercase{Registres et fréquences}}\hspace{3mm}{\scriptsize\color{doux}le mid de la table balaye de 100\,Hz à 8\,kHz ; le low agit sous 100\,Hz et le high au-dessus de 10\,kHz (pointillés)}
+
+\vspace{0.5mm}
+\directlua{fiche.spectre(tex.dimen.linewidth/65536/28.45274)}
+
+
+\end{document}
